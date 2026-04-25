@@ -1,0 +1,8 @@
+{
+  "n_patients": 1000,
+  "n_trial_inclusion": 381,
+  "n_trial_exclusion": 602,
+  "n_neither": 17,
+  "inclusion_rate": 0.381,
+  "exclusion_rate": 0.602
+}
