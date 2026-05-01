@@ -1,4 +1,5 @@
 # Useful imports and utility functions
+import time
 from pathlib import Path
 
 import galois
@@ -217,27 +218,45 @@ def hospital_local_ok_at(df, i):
         return 0
 
 
-def run_mpc_eligibility():
-    """Run the MPC eligibility protocol over the full cohort.
+def run_mpc_eligibility(n_rows=None):
+    """Run the MPC eligibility protocol over (a prefix of) the cohort.
 
     For each row: each party reduces its local constraints in plaintext,
     secret-shares the resulting bit, and the parties multiply the two
-    shares (1 Beaver triple per row). Returns a list of revealed bits.
+    shares (1 Beaver triple per row).
+
+    Returns (revealed_bits, stats) where stats reports cost numbers
+    measured during this run.
     """
-    gen_triples(NUM_ROWS)
+    n = NUM_ROWS if n_rows is None else n_rows
+
+    t0 = time.perf_counter()
+    gen_triples(n)
+    t1 = time.perf_counter()
 
     clinic_data = get_clinic_data()
     hospital_data = get_hospital_data()
 
     revealed = []
-    for i in range(NUM_ROWS):
+    for i in range(n):
         c_bit = clinic_local_ok_at(clinic_data, i)
         h_bit = hospital_local_ok_at(hospital_data, i)
         c_sec = SecInt.input(c_bit)
         h_sec = SecInt.input(h_bit)
         out = c_sec * h_sec
         revealed.append(out.reveal())
-    return revealed
+    t2 = time.perf_counter()
+
+    online_s = t2 - t1
+    stats = {
+        'n_rows': n,
+        'triples_consumed': n,
+        'triple_gen_s': t1 - t0,
+        'online_s': online_s,
+        'total_s': t2 - t0,
+        'rows_per_sec_online': (n / online_s) if online_s > 0 else 0.0,
+    }
+    return revealed, stats
 
 
 # ------------- Test Runners -------------
@@ -249,23 +268,30 @@ def _load_ground_truth():
     return combined['trial_inclusion'].values
 
 
-def test_mpc_protocol():
-    """Run the MPC protocol end-to-end and validate against the ground_truth."""
-    print("\n=== MPC eligibility test ===")
+def test_mpc_protocol(n_rows=None):
+    """Run the MPC protocol end-to-end, validate vs. ground truth, print cost stats."""
+    n = NUM_ROWS if n_rows is None else n_rows
+    print(f"\n=== MPC eligibility test (N = {n}) ===")
     ground_truth = _load_ground_truth()
     try:
         with pychor.LocalBackend():
-            revealed = run_mpc_eligibility()
+            revealed, stats = run_mpc_eligibility(n)
             bits = [int(r.val) for r in revealed]
     except NotImplementedError as e:
         print(f"  [skip] {e}")
         return
 
-    matches = sum(1 for r, t in zip(bits, ground_truth) if r == t)
+    matches = sum(1 for r, t in zip(bits, ground_truth[:n]) if r == t)
     eligible = sum(bits)
-    print(f"  matched ground_truth: {matches}/{NUM_ROWS}")
-    print(f"  eligible (revealed): {eligible}/{NUM_ROWS}")
-    assert matches == NUM_ROWS, "MPC output disagrees with the plaintext ground_truth"
+    print(f"  matched ground_truth: {matches}/{n}")
+    print(f"  eligible (revealed):  {eligible}/{n}")
+    print(f"  triples consumed:     {stats['triples_consumed']}")
+    print(f"  triple gen:           {stats['triple_gen_s']*1000:8.1f} ms"
+          f"  ({stats['triple_gen_s']/n*1000:.3f} ms / row)")
+    print(f"  online:               {stats['online_s']*1000:8.1f} ms"
+          f"  ({stats['rows_per_sec_online']:.0f} rows/s)")
+    print(f"  total:                {stats['total_s']*1000:8.1f} ms")
+    assert matches == n, "MPC output disagrees with the plaintext ground_truth"
     print("  OK")
 
 
@@ -274,4 +300,5 @@ if __name__ == "__main__":
     print(f"  clinic columns:   {list(_clinic_df.columns)}")
     print(f"  hospital columns: {list(_hospital_df.columns)}")
 
-    test_mpc_protocol()
+    for n in (100, NUM_ROWS):
+        test_mpc_protocol(n)
