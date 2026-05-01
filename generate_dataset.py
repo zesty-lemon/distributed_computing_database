@@ -47,6 +47,45 @@ AST_ULN = 40
 ALT_EXCLUSION = 3 * ALT_ULN
 AST_EXCLUSION = 3 * AST_ULN
 
+# Vertical split (HW4-style cross-silo). patient_id is the join key and
+# appears in both parties' files. trial_inclusion / trial_exclusion are
+# oracle ground truth and stay out of both party files.
+CLINIC_FIELDS = [
+    "patient_id",
+    "age",
+    "mmse",
+    "moca",
+    "cdr_global",
+    "adl_score",
+    "iadl_score",
+    "depression_score",
+    "major_depression_flag",
+    "decline_6mo_flag",
+    "cognitive_decline_rate",
+    "sleep_disruption_score",
+    "gait_speed",
+    "caregiver_available",
+]
+
+HOSPITAL_FIELDS = [
+    "patient_id",
+    "amyloid_status",
+    "tau_status",
+    "nfl_level",
+    "apoe4_carrier",
+    "hippocampal_volume_pct",
+    "amyloid_pet_positive",
+    "fdg_pet_pattern",
+    "microhemorrhage_count",
+    "egfr",
+    "alt",
+    "ast",
+    "cardio_risk_flag",
+    "stroke_history",
+    "other_neuro_disease",
+    "medication_exclusion_flag",
+]
+
 
 @dataclass
 class Patient:
@@ -260,18 +299,30 @@ def generate(n: int, eligible_fraction: float, seed: int) -> list[Patient]:
     return patients
 
 
-def write_csv(patients: list[Patient], path: Path) -> None:
+def _project(patients: list[Patient], fields: list[str] | None) -> list[dict]:
     rows = [asdict(p) for p in patients]
+    if fields is None:
+        return rows
+    return [{k: r[k] for k in fields} for r in rows]
+
+
+def write_csv(
+    patients: list[Patient], path: Path, fields: list[str] | None = None
+) -> None:
+    rows = _project(patients, fields)
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
 
-def write_jsonl(patients: list[Patient], path: Path) -> None:
+def write_jsonl(
+    patients: list[Patient], path: Path, fields: list[str] | None = None
+) -> None:
+    rows = _project(patients, fields)
     with path.open("w") as f:
-        for p in patients:
-            f.write(json.dumps(asdict(p)) + "\n")
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
 
 
 def summarize(patients: list[Patient]) -> dict:
@@ -315,10 +366,21 @@ def main() -> None:
 
     patients = generate(args.num_patients, args.eligible_fraction, args.seed)
 
-    csv_path = args.out_dir / f"{args.basename}.csv"
-    jsonl_path = args.out_dir / f"{args.basename}.jsonl"
-    write_csv(patients, csv_path)
-    write_jsonl(patients, jsonl_path)
+    # Combined reference file — full record incl. oracle ground truth.
+    combined_csv = args.out_dir / f"{args.basename}.csv"
+    combined_jsonl = args.out_dir / f"{args.basename}.jsonl"
+    write_csv(patients, combined_csv)
+    write_jsonl(patients, combined_jsonl)
+
+    # Vertical split — one party per file, joined by patient_id.
+    clinic_csv = args.out_dir / "clinic_patients.csv"
+    clinic_jsonl = args.out_dir / "clinic_patients.jsonl"
+    hospital_csv = args.out_dir / "hospital_patients.csv"
+    hospital_jsonl = args.out_dir / "hospital_patients.jsonl"
+    write_csv(patients, clinic_csv, fields=CLINIC_FIELDS)
+    write_jsonl(patients, clinic_jsonl, fields=CLINIC_FIELDS)
+    write_csv(patients, hospital_csv, fields=HOSPITAL_FIELDS)
+    write_jsonl(patients, hospital_jsonl, fields=HOSPITAL_FIELDS)
 
     stats = summarize(patients)
     stats_path = args.out_dir / f"{args.basename}_summary.json"
@@ -326,8 +388,12 @@ def main() -> None:
         json.dump(stats, f, indent=2)
 
     print(f"Wrote {len(patients)} patients to:")
-    print(f"  {csv_path}")
-    print(f"  {jsonl_path}")
+    print(f"  {combined_csv}")
+    print(f"  {combined_jsonl}")
+    print(f"  {clinic_csv}  ({len(CLINIC_FIELDS)} cols)")
+    print(f"  {clinic_jsonl}")
+    print(f"  {hospital_csv}  ({len(HOSPITAL_FIELDS)} cols)")
+    print(f"  {hospital_jsonl}")
     print(f"  {stats_path}")
     print("Summary:", json.dumps(stats, indent=2))
 
