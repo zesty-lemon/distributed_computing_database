@@ -198,7 +198,34 @@ out/
 logs/
 log/
 
-sandbox/
 # Coverage reports
 coverage/
 
+
+# trained models
+
+trained_models/random_forest/sandbox/
+
+# Claude
+CLAUDE.md
+.claude/
+.claude/settings.local.json
+
+
+# Ignore everything in /data
+/data/*
+
+# But keep this specific file
+!/data/ReadMe.txt
+
+!/data/state_boundary_files/
+
+# CANNOT HAVE API KEYS ON GITHUB!!!
+/config/keys.py
+/models/trained_models/resnet_101/
+
+
+#
+*.pth
+*.pt
+*.MD
