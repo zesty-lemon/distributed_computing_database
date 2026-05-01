@@ -183,24 +183,38 @@ def clinic_local_ok_at(df, i):
 
 @pychor.local_function
 def hospital_local_ok_at(df, i):
-    """Reduce all hospital-side trial constraints for row i into a single 0/1.
-
-    Returns 1 iff the patient passes the hospital-local inclusion check
-    AND fails every hospital-local exclusion check. Located @{hospital}.
-
-    Inclusion (hospital-local):
-        amyloid_status == 1
-    Exclusion (hospital-local):
-        microhemorrhage_count > 4
-        egfr < 45
-        alt > 168                    # 3 * ULN
-        ast > 120                    # 3 * ULN
-        cardio_risk_flag == 1
-        stroke_history == 1
-        other_neuro_disease == 1
-        medication_exclusion_flag == 1
     """
-    raise NotImplementedError("TODO: implement hospital-side local boolean reduction")
+    The Hospital Decides if df@i (the current patient) is a fit or not
+    :param df: Hospital's Data
+    :param i: Patient Index
+    :return:
+    """
+    # Get Hospital's Info
+    amyloid_status = int(df.at[i, 'amyloid_status'])
+    microhemorrhage_count = int(df.at[i, 'microhemorrhage_count'])
+    egfr = float(df.at[i, 'egfr'])
+    alt = float(df.at[i, 'alt'])
+    ast = float(df.at[i, 'ast'])
+    cardio_risk_flag = int(df.at[i, 'cardio_risk_flag'])
+    stroke_history = int(df.at[i, 'stroke_history'])
+    other_neuro_disease = int(df.at[i, 'other_neuro_disease'])
+    medication_exclusion_flag = int(df.at[i, 'medication_exclusion_flag'])
+
+    # Decide if info is within allowable parameters
+    amyloid_allowed = amyloid_status == 1
+    microhemorrhage_allowed = microhemorrhage_count <= 4  # too many bleeds
+    egfr_allowed = egfr >= 45 # kidney function
+    alt_allowed = alt <= 168  # 3 * ULN liver
+    ast_allowed = ast <= 120  # 3 * ULN liver
+    cardio_allowed = cardio_risk_flag != 1 # uncontrolled CV
+    stroke_allowed = stroke_history != 1 # major stroke
+    other_neuro_allowed = other_neuro_disease != 1 # confounding diagnosis
+    medication_allowed = medication_exclusion_flag != 1 # disallowed meds
+
+    if amyloid_allowed and microhemorrhage_allowed and egfr_allowed and alt_allowed and ast_allowed and cardio_allowed and stroke_allowed and other_neuro_allowed and medication_allowed:
+        return 1
+    else:
+        return 0
 
 
 def run_mpc_eligibility():
@@ -218,7 +232,7 @@ def run_mpc_eligibility():
     revealed = []
     for i in range(NUM_ROWS):
         c_bit = clinic_local_ok_at(clinic_data, i)
-        # h_bit = hospital_local_ok_at(hospital_data, i)
+        h_bit = hospital_local_ok_at(hospital_data, i)
         c_sec = SecInt.input(c_bit)
         h_sec = SecInt.input(h_bit)
         out = c_sec * h_sec
@@ -228,16 +242,17 @@ def run_mpc_eligibility():
 
 # ------------- Test Runners -------------
 
-def _load_oracle():
+def _load_ground_truth():
     """Ground-truth eligibility bits from the dataset generator."""
     combined = pd.read_csv(DATA_DIR / "trial_patients.csv")
+    # ^ This dataset is just the combined datasets. Used for validation ONLY
     return combined['trial_inclusion'].values
 
 
 def test_mpc_protocol():
-    """Run the MPC protocol end-to-end and validate against the oracle."""
+    """Run the MPC protocol end-to-end and validate against the ground_truth."""
     print("\n=== MPC eligibility test ===")
-    oracle = _load_oracle()
+    ground_truth = _load_ground_truth()
     try:
         with pychor.LocalBackend():
             revealed = run_mpc_eligibility()
@@ -246,11 +261,11 @@ def test_mpc_protocol():
         print(f"  [skip] {e}")
         return
 
-    matches = sum(1 for r, t in zip(bits, oracle) if r == t)
+    matches = sum(1 for r, t in zip(bits, ground_truth) if r == t)
     eligible = sum(bits)
-    print(f"  matched oracle: {matches}/{NUM_ROWS}")
+    print(f"  matched ground_truth: {matches}/{NUM_ROWS}")
     print(f"  eligible (revealed): {eligible}/{NUM_ROWS}")
-    assert matches == NUM_ROWS, "MPC output disagrees with the plaintext oracle"
+    assert matches == NUM_ROWS, "MPC output disagrees with the plaintext ground_truth"
     print("  OK")
 
 
